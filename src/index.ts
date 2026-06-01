@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { Buffer } from 'buffer';
+import { spawn } from 'child_process';
 import dotenv from 'dotenv';
 
 // .env ファイルの読み込み
@@ -31,7 +32,15 @@ const MODEL_RATES: Record<string, ModelRate> = {
   'claude-3-opus': { input: 15.0 / 1000000, output: 75.0 / 1000000, name: 'Claude 3 Opus' },
   'claude-3-opus-20240229': { input: 15.0 / 1000000, output: 75.0 / 1000000, name: 'Claude 3 Opus' },
   'claude-3-haiku': { input: 0.25 / 1000000, output: 1.25 / 1000000, name: 'Claude 3 Haiku' },
-  'claude-3-haiku-20240307': { input: 0.25 / 1000000, output: 1.25 / 1000000, name: 'Claude 3 Haiku' }
+  'claude-3-haiku-20240307': { input: 0.25 / 1000000, output: 1.25 / 1000000, name: 'Claude 3 Haiku' },
+  // OpenAI / Codex（includes一致のため -mini を先に置く）
+  'gpt-4o-mini': { input: 0.15 / 1000000, output: 0.6 / 1000000, name: 'GPT-4o mini' },
+  'gpt-4.1-mini': { input: 0.4 / 1000000, output: 1.6 / 1000000, name: 'GPT-4.1 mini' },
+  'o4-mini': { input: 1.1 / 1000000, output: 4.4 / 1000000, name: 'o4-mini' },
+  'gpt-4o': { input: 2.5 / 1000000, output: 10.0 / 1000000, name: 'GPT-4o' },
+  'gpt-4.1': { input: 2.0 / 1000000, output: 8.0 / 1000000, name: 'GPT-4.1' },
+  'gpt-5': { input: 1.25 / 1000000, output: 10.0 / 1000000, name: 'GPT-5' },
+  'o3': { input: 2.0 / 1000000, output: 8.0 / 1000000, name: 'o3' }
 };
 
 const DEFAULT_RATE: ModelRate = { input: 3.0 / 1000000, output: 15.0 / 1000000, name: 'Claude 3.5 Sonnet (Default)' };
@@ -551,6 +560,87 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 5.5 OpenAI / Codex パススルー (chat/completions・responses) → api.openai.com
+  if ((urlPath.endsWith('/chat/completions') || urlPath.endsWith('/responses')) && req.method === 'POST') {
+    let bodyData = '';
+    req.on('data', chunk => { bodyData += chunk; });
+    req.on('end', () => {
+      try {
+        const body = JSON.parse(bodyData || '{}');
+        const model = body.model || 'gpt-4o';
+        const isStream = body.stream === true;
+        const rate = getModelRate(model);
+
+        // 入力テキスト抽出（chat: messages / responses: input）→ 日本語浪費推定
+        let promptText = '';
+        if (Array.isArray(body.messages)) {
+          for (const m of body.messages) {
+            if (typeof m.content === 'string') promptText += m.content;
+            else if (Array.isArray(m.content)) for (const p of m.content) { if (typeof p.text === 'string') promptText += p.text; }
+          }
+        }
+        if (typeof body.input === 'string') promptText += body.input;
+        const wastedInputTokens = estimateJapaneseWastedTokens(promptText);
+
+        // --- 物理予算ブレーカー（OpenAI形式エラーで返す） ---
+        if (stats.todayCostUsd >= stats.dailyBudgetLimitUsd) {
+          stats.blockedRequests++; stats.totalRequests++;
+          stats.requestsLog.unshift({ timestamp: new Date().toLocaleTimeString('ja-JP'), model: rate.name, inputTokens: 0, outputTokens: 0, costUsd: 0, wastedCostUsd: 0, status: 'blocked', isMock: false });
+          if (stats.requestsLog.length > 50) stats.requestsLog.pop();
+          res.writeHead(429, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: { message: `yakushield [物理予算ブレーカー作動]: 1日の上限予算 ($${stats.dailyBudgetLimitUsd.toFixed(2)}) を超過したため遮断しました。ダッシュボード (http://localhost:${PORT}) で上限を変更できます。`, type: 'over_budget_error', code: 'over_budget' } }));
+          return;
+        }
+
+        // 認証キー: リクエストの Authorization か OPENAI_API_KEY
+        const authHeader = (req.headers['authorization'] as string) || (process.env.OPENAI_API_KEY ? `Bearer ${process.env.OPENAI_API_KEY}` : '');
+        if (!authHeader) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: { message: 'yakushield: OpenAI APIキーがありません（Authorization ヘッダ or OPENAI_API_KEY）。', type: 'authentication_error' } }));
+          return;
+        }
+
+        const fwdPath = urlPath.endsWith('/responses') ? '/v1/responses' : '/v1/chat/completions';
+        const options = { hostname: 'api.openai.com', path: fwdPath, method: 'POST', headers: { 'content-type': 'application/json', 'authorization': authHeader } as Record<string, string> };
+        if (req.headers['openai-organization']) options.headers['openai-organization'] = req.headers['openai-organization'] as string;
+
+        const clientReq = https.request(options, (clientRes) => {
+          res.writeHead(clientRes.statusCode || 200, clientRes.headers);
+          let buffer = '';
+          clientRes.on('data', (chunk) => { res.write(chunk); buffer += chunk.toString(); });
+          clientRes.on('end', () => {
+            res.end(); stats.totalRequests++;
+            try {
+              let inTok = 0, outTok = 0;
+              // chat: prompt_tokens/completion_tokens ／ responses: input_tokens/output_tokens ／ stream は正規表現で抽出
+              const pIn = buffer.match(/"(?:prompt_tokens|input_tokens)"\s*:\s*(\d+)/);
+              const pOutAll = [...buffer.matchAll(/"(?:completion_tokens|output_tokens)"\s*:\s*(\d+)/g)];
+              if (pIn) inTok = parseInt(pIn[1], 10);
+              if (pOutAll.length > 0) outTok = parseInt(pOutAll[pOutAll.length - 1][1], 10);
+              if (inTok > 0 || outTok > 0) {
+                const cost = (inTok * rate.input) + (outTok * rate.output);
+                const finalWasted = Math.min(wastedInputTokens, inTok);
+                const wastedCost = finalWasted * rate.input;
+                stats.todayCostUsd = parseFloat((stats.todayCostUsd + cost).toFixed(6));
+                stats.todayInputTokens += inTok; stats.todayOutputTokens += outTok;
+                stats.japaneseWastedTokens += finalWasted;
+                stats.japaneseWastedCostUsd = parseFloat((stats.japaneseWastedCostUsd + wastedCost).toFixed(6));
+                stats.requestsLog.unshift({ timestamp: new Date().toLocaleTimeString('ja-JP'), model: rate.name, inputTokens: inTok, outputTokens: outTok, costUsd: parseFloat(cost.toFixed(6)), wastedCostUsd: parseFloat(wastedCost.toFixed(6)), status: 'success', isMock: false });
+                if (stats.requestsLog.length > 50) stats.requestsLog.pop();
+              }
+            } catch (e) { console.error('[yakushield] OpenAI usage parse error:', e); }
+          });
+        });
+        clientReq.on('error', (err) => { console.error('[yakushield] OpenAI Proxy Error:', err); res.writeHead(502, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: { message: err.message, type: 'bad_gateway' } })); });
+        clientReq.write(bodyData); clientReq.end();
+      } catch (err: any) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: err.message, type: 'invalid_request_error' } }));
+      }
+    });
+    return;
+  }
+
   // 6. それ以外の未知のルート
   res.writeHead(404, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ error: 'Not Found', path: urlPath }));
@@ -580,4 +670,25 @@ server.listen(PORT, () => {
     console.log(`                     本番中継は .env の ANTHROPIC_API_KEY にキーを設定してください。`);
   }
   console.log('----------------------------------------------------\n');
+
+  // --- ワンコマンド・ラッパー: `yakushield claude` / `yakushield codex` / `yakushield <cmd...>` ---
+  // 引数があれば、プロキシ起動後にエージェントを正しい BASE_URL 環境変数付きで起動する（手動 export 不要）。
+  const agentArgs = process.argv.slice(2).filter(a => a !== '--');
+  if (agentArgs.length > 0) {
+    const cmd = agentArgs[0];
+    const childArgs = agentArgs.slice(1);
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    if (cmd === 'codex') {
+      env.OPENAI_BASE_URL = `http://localhost:${PORT}/v1`;
+    } else if (cmd === 'claude') {
+      env.ANTHROPIC_BASE_URL = `http://localhost:${PORT}`;
+    } else {
+      env.ANTHROPIC_BASE_URL = `http://localhost:${PORT}`;
+      env.OPENAI_BASE_URL = `http://localhost:${PORT}/v1`;
+    }
+    console.log('\x1b[35m%s\x1b[0m', `  🔌  ${cmd} を YakuShield 経由で起動します（予算ブレーカー＋計測ON・手動設定不要）...\n`);
+    const child = spawn(cmd, childArgs, { stdio: 'inherit', env, shell: process.platform === 'win32' });
+    child.on('error', (e: any) => { console.error('\x1b[31m%s\x1b[0m', `  ✖ ${cmd} を起動できませんでした: ${e.message}`); server.close(); process.exit(1); });
+    child.on('exit', (code) => { server.close(); process.exit(code ?? 0); });
+  }
 });
