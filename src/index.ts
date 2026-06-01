@@ -365,13 +365,15 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // --- B. APIキーの特定 ---
+        // --- B. 認証の特定（x-api-key=APIキー / authorization=サブスクOAuth 両対応）---
         const reqApiKey = req.headers['x-api-key'] as string;
+        const reqAuth = req.headers['authorization'] as string;
         const localApiKey = process.env.ANTHROPIC_API_KEY;
         const finalApiKey = reqApiKey || localApiKey;
+        const hasAuth = finalApiKey || reqAuth;
 
-        // --- C. キーが無い場合は自動でモックモード ---
-        if (!finalApiKey) {
+        // --- C. 認証が一切無い時だけモックモード（APIキー不要のデモ）---
+        if (!hasAuth) {
           stats.totalRequests++;
           const mockText = generateMockContent();
           
@@ -456,16 +458,26 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // --- D. 本物の Anthropic API に中継 ---
+        // --- D. 本物の Anthropic API に中継（クライアントのヘッダーを透過＝APIキーもサブスクOAuthもそのまま通す）---
+        const fwdHeaders: Record<string, string> = {};
+        for (const [hk, hv] of Object.entries(req.headers)) {
+          const lk = hk.toLowerCase();
+          // host/長さ/接続/圧縮系は除外（圧縮を外すのは usage 解析を壊さないため）
+          if (lk === 'host' || lk === 'content-length' || lk === 'connection' || lk === 'accept-encoding') continue;
+          if (typeof hv === 'string') fwdHeaders[lk] = hv;
+          else if (Array.isArray(hv)) fwdHeaders[lk] = hv.join(', ');
+        }
+        fwdHeaders['content-type'] = 'application/json';
+        if (!fwdHeaders['anthropic-version']) fwdHeaders['anthropic-version'] = '2023-06-01';
+        // クライアントが認証を付けず、ローカルに .env のキーがある時だけ補完
+        if (!fwdHeaders['x-api-key'] && !fwdHeaders['authorization'] && localApiKey) {
+          fwdHeaders['x-api-key'] = localApiKey;
+        }
         const options = {
           hostname: 'api.anthropic.com',
           path: '/v1/messages',
           method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'x-api-key': finalApiKey,
-            'anthropic-version': req.headers['anthropic-version'] as string || '2023-06-01'
-          }
+          headers: fwdHeaders
         };
 
         const clientReq = https.request(options, (clientRes) => {
@@ -663,12 +675,11 @@ server.listen(PORT, () => {
   console.log(`  🔌  LLM Base URL:   \x1b[36mhttp://localhost:${PORT}\x1b[0m`);
   console.log('----------------------------------------------------');
   
+  console.log(`  ✅  認証は透過中継:  Claude Code / Codex が使う認証（APIキー or サブスク）をそのまま通します`);
   if (process.env.ANTHROPIC_API_KEY) {
-    console.log(`  🔑  APIキー検出:    Anthropic APIキーを読み込みました (透過中継モード)`);
-  } else {
-    console.log(`  🧪  APIキー未検出:  \x1b[33mスタブ/モックモードで動作中\x1b[0m (APIキー不要でテスト可能)`);
-    console.log(`                     本番中継は .env の ANTHROPIC_API_KEY にキーを設定してください。`);
+    console.log(`  🔑  補完キー検出:    認証無しリクエストには .env の Anthropic APIキーを補完します`);
   }
+  console.log(`  🧪  認証が無いリクエストのみ \x1b[33mモック応答\x1b[0m（APIキー不要でダッシュボードを試せます）`);
   console.log('----------------------------------------------------\n');
 
   // --- ワンコマンド・ラッパー: `yakushield claude` / `yakushield codex` / `yakushield <cmd...>` ---
