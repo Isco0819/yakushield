@@ -1,0 +1,1003 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>yakushield (訳シールド) | ローカルLLM予算ブレーカー</title>
+  <!-- Google Fonts: Outfit & Noto Sans JP -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+  
+  <style>
+    :root {
+      --bg-dark: #0b0f19;
+      --card-bg: rgba(255, 255, 255, 0.05);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --primary: #8b5cf6;
+      --primary-glow: rgba(139, 92, 246, 0.4);
+      --accent-pink: #ec4899;
+      --accent-cyan: #06b6d4;
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+      --success: #10b981;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      font-family: 'Outfit', 'Noto Sans JP', sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+      position: relative;
+    }
+
+    /* 背景グラデーション球体 */
+    .bg-glow-1 {
+      position: absolute;
+      top: -10%;
+      left: -10%;
+      width: 50vw;
+      height: 50vw;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(139, 92, 246, 0.15) 0%, rgba(0,0,0,0) 70%);
+      z-index: -1;
+      filter: blur(60px);
+      pointer-events: none;
+    }
+
+    .bg-glow-2 {
+      position: absolute;
+      bottom: -10%;
+      right: -10%;
+      width: 60vw;
+      height: 60vw;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(236, 72, 153, 0.1) 0%, rgba(0,0,0,0) 70%);
+      z-index: -1;
+      filter: blur(80px);
+      pointer-events: none;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem;
+    }
+
+    /* ヘッダー */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2.5rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--card-border);
+    }
+
+    .logo-container {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .logo-icon {
+      width: 2.5rem;
+      height: 2.5rem;
+      background: linear-gradient(135deg, var(--primary), var(--accent-pink));
+      border-radius: 0.75rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 1.25rem;
+      box-shadow: 0 0 15px var(--primary-glow);
+    }
+
+    .logo-text h1 {
+      font-size: 1.5rem;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      background: linear-gradient(to right, #fff, #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .logo-text p {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    .badge-status {
+      padding: 0.4rem 0.8rem;
+      border-radius: 50rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      backdrop-filter: blur(8px);
+    }
+
+    .badge-free {
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      color: var(--warning);
+    }
+
+    .badge-pro {
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: var(--success);
+      box-shadow: 0 0 10px rgba(10, 185, 129, 0.2);
+    }
+
+    /* グラスモルフィズムカード */
+    .glass-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 1.25rem;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      padding: 1.75rem;
+      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+      margin-bottom: 2rem;
+      transition: transform 0.3s ease, border-color 0.3s ease;
+    }
+
+    .glass-card:hover {
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    /* グリッドレイアウト */
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 1.5fr 1fr;
+      gap: 2rem;
+    }
+
+    @media (max-width: 900px) {
+      .dashboard-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* コストメーターと主要数値 */
+    .cost-hero {
+      text-align: center;
+      padding: 2rem 0;
+      position: relative;
+    }
+
+    .cost-number {
+      font-size: 4.5rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1;
+      background: linear-gradient(135deg, #ffffff 30%, #a78bfa 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin: 0.5rem 0;
+    }
+
+    .cost-label {
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-muted);
+    }
+
+    .budget-limit-display {
+      font-size: 1.1rem;
+      color: var(--primary);
+      font-weight: 600;
+      margin-top: 0.5rem;
+    }
+
+    /* 予算スライダー */
+    .slider-container {
+      margin: 2rem 0 1rem 0;
+    }
+
+    .slider-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.85rem;
+      margin-bottom: 0.5rem;
+    }
+
+    input[type=range] {
+      -webkit-appearance: none;
+      width: 100%;
+      background: transparent;
+    }
+
+    input[type=range]:focus {
+      outline: none;
+    }
+
+    input[type=range]::-webkit-slider-runnable-track {
+      width: 100%;
+      height: 8px;
+      cursor: pointer;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    input[type=range]::-webkit-slider-thumb {
+      height: 20px;
+      width: 20px;
+      border-radius: 50%;
+      background: var(--primary);
+      cursor: pointer;
+      -webkit-appearance: none;
+      margin-top: -6px;
+      box-shadow: 0 0 10px var(--primary);
+      transition: transform 0.1s;
+    }
+
+    input[type=range]::-webkit-slider-thumb:hover {
+      transform: scale(1.2);
+    }
+
+    /* 日本語浪費の見える化 */
+    .waste-container {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      padding: 1rem 0;
+    }
+
+    .waste-header-box {
+      background: rgba(236, 72, 153, 0.08);
+      border: 1px solid rgba(236, 72, 153, 0.2);
+      border-radius: 0.75rem;
+      padding: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .waste-icon {
+      font-size: 1.75rem;
+      color: var(--accent-pink);
+    }
+
+    .waste-header-text h3 {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .waste-header-text p {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.15rem;
+    }
+
+    .stats-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    .stat-mini-card {
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--card-border);
+      border-radius: 0.75rem;
+      padding: 1rem;
+      text-align: center;
+    }
+
+    .stat-mini-val {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .stat-mini-val.pink {
+      color: var(--accent-pink);
+    }
+
+    .stat-mini-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+    }
+
+    /* 物理予算ブレーカー警告 */
+    .breaker-alert {
+      background: rgba(239, 68, 68, 0.12);
+      border: 2px solid rgba(239, 68, 68, 0.35);
+      border-radius: 0.75rem;
+      padding: 1rem;
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      margin-top: 1rem;
+      animation: pulse 2s infinite;
+      display: none; /* デフォルト非表示 */
+    }
+
+    @keyframes pulse {
+      0% { border-color: rgba(239, 68, 68, 0.35); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.2); }
+      50% { border-color: rgba(239, 68, 68, 0.7); box-shadow: 0 0 10px 2px rgba(239, 68, 68, 0.3); }
+      100% { border-color: rgba(239, 68, 68, 0.35); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.2); }
+    }
+
+    .breaker-alert-icon {
+      font-size: 1.25rem;
+      color: var(--danger);
+      line-height: 1;
+    }
+
+    .breaker-alert-text h4 {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .breaker-alert-text p {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.15rem;
+    }
+
+    /* タブ & フォーム */
+    .form-group {
+      margin-bottom: 1.25rem;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-bottom: 0.5rem;
+      font-weight: 500;
+    }
+
+    .input-field {
+      width: 100%;
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid var(--card-border);
+      border-radius: 0.5rem;
+      padding: 0.75rem 1rem;
+      color: #fff;
+      font-family: inherit;
+      font-size: 0.9rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .input-field:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 10px rgba(139, 92, 246, 0.25);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      background: linear-gradient(135deg, var(--primary), #7c3aed);
+      color: #fff;
+      border: none;
+      border-radius: 0.5rem;
+      padding: 0.75rem 1.25rem;
+      font-family: inherit;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+      width: 100%;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 0 15px var(--primary-glow);
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--card-border);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.15);
+      box-shadow: none;
+    }
+
+    /* 履歴テーブル */
+    .table-container {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+      text-align: left;
+    }
+
+    th {
+      color: var(--text-muted);
+      font-weight: 500;
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--card-border);
+    }
+
+    td {
+      padding: 1rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    }
+
+    .status-pill {
+      display: inline-block;
+      padding: 0.2rem 0.5rem;
+      border-radius: 0.25rem;
+      font-size: 0.7rem;
+      font-weight: 600;
+    }
+
+    .status-success {
+      background: rgba(16, 185, 129, 0.1);
+      color: var(--success);
+    }
+
+    .status-blocked {
+      background: rgba(239, 68, 68, 0.1);
+      color: var(--danger);
+    }
+
+    .text-right {
+      text-align: right;
+    }
+
+    /* トースト通知 */
+    .toast {
+      position: fixed;
+      bottom: 2rem;
+      right: 2rem;
+      background: rgba(11, 15, 25, 0.9);
+      border: 1px solid var(--card-border);
+      border-radius: 0.75rem;
+      padding: 1rem 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      backdrop-filter: blur(10px);
+      z-index: 100;
+      transform: translateY(150%);
+      transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    .toast.show {
+      transform: translateY(0);
+    }
+
+    .toast-success { border-left: 4px solid var(--success); }
+    .toast-error { border-left: 4px solid var(--danger); }
+    .toast-warning { border-left: 4px solid var(--warning); }
+
+    /* ASCIIロゴを模したお洒落フッター */
+    footer {
+      text-align: center;
+      margin-top: 3rem;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      padding: 2rem 0;
+      border-top: 1px solid var(--card-border);
+    }
+
+    .footer-links {
+      margin-top: 0.5rem;
+      display: flex;
+      justify-content: center;
+      gap: 1rem;
+    }
+
+    .footer-links a {
+      color: var(--primary);
+      text-decoration: none;
+    }
+
+    .footer-links a:hover {
+      text-decoration: underline;
+    }
+
+    /* クイックガイドカード */
+    .guide-box {
+      background: rgba(139, 92, 246, 0.03);
+      border: 1px solid rgba(139, 92, 246, 0.1);
+      border-radius: 0.75rem;
+      padding: 1rem;
+      font-size: 0.8rem;
+      line-height: 1.5;
+    }
+
+    .guide-box code {
+      background: rgba(0,0,0,0.4);
+      color: var(--accent-cyan);
+      padding: 0.15rem 0.35rem;
+      border-radius: 0.25rem;
+      font-family: monospace;
+    }
+
+    .guide-box ol {
+      margin-left: 1.25rem;
+      margin-top: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="bg-glow-1"></div>
+  <div class="bg-glow-2"></div>
+
+  <div class="container">
+    
+    <!-- HEADER -->
+    <header>
+      <div class="logo-container">
+        <div class="logo-icon">YS</div>
+        <div class="logo-text">
+          <h1>yakushield</h1>
+          <p>訳シールド - LLM Proxy & Budget Breaker</p>
+        </div>
+      </div>
+      
+      <div id="license-badge" class="badge-status badge-free">
+        <span id="license-badge-text">FREE PLAN (計測+遮断)</span>
+      </div>
+    </header>
+
+    <!-- MAIN BODY -->
+    <div class="dashboard-grid">
+      
+      <!-- LEFT SIDE: MONITORING & CONTROLS -->
+      <div class="main-column">
+        
+        <!-- CARD: HERO MONITOR -->
+        <div class="glass-card">
+          <div class="cost-hero">
+            <span class="cost-label">TODAY'S LLM SPENDING</span>
+            <div id="today-cost" class="cost-number">$0.0000</div>
+            <div class="budget-limit-display">
+              1日の予算上限: <span id="budget-val-txt">$5.00</span>
+            </div>
+          </div>
+
+          <!-- PHYSICAL BREAKER ALERT -->
+          <div id="breaker-alert-banner" class="breaker-alert">
+            <div class="breaker-alert-icon">⚡</div>
+            <div class="breaker-alert-text">
+              <h4>【警告】物理予算ブレーカー作動中</h4>
+              <p>設定された上限金額を超過したため、LLMへの中継リクエストを安全に遮断しています。スライダーで上限を拡張できます。</p>
+            </div>
+          </div>
+
+          <!-- BUDGET SLIDER -->
+          <div class="slider-container">
+            <div class="slider-header">
+              <span>物理予算ブレーカー上限を設定</span>
+              <span id="slider-val" style="font-weight: 700; color: var(--primary);">$5.00</span>
+            </div>
+            <input type="range" id="budget-range" min="1" max="50" step="1" value="5">
+          </div>
+        </div>
+
+        <!-- CARD: VISUALIZE JAPANESE WASTED TOKENS -->
+        <div class="glass-card">
+          <h2 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 1.25rem; display: flex; align-items: center; gap: 0.5rem;">
+            <span>📉</span> 日本語トークン浪費の見える化
+          </h2>
+          
+          <div class="waste-container">
+            <div class="waste-header-box">
+              <div class="waste-icon">💡</div>
+              <div class="waste-header-text">
+                <h3>日本語プロンプトは英語に比べ約3倍浪費されます</h3>
+                <p>日本語はトークン効率が悪いため、英語にすると消費コストを約 <b>66%</b> 削減できます。yakushield はその浪費規模をリアルタイム計測しています。</p>
+              </div>
+            </div>
+
+            <div class="stats-row">
+              <div class="stat-mini-card">
+                <div id="wasted-tokens" class="stat-mini-val pink">0</div>
+                <div class="stat-mini-label">浪費された入力トークン</div>
+              </div>
+              <div class="stat-mini-card">
+                <div id="wasted-cost" class="stat-mini-val pink">$0.0000</div>
+                <div class="stat-mini-label">日本語の壁による想定損失</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CARD: INTEGRATION GUIDE -->
+        <div class="glass-card">
+          <h2 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 1.25rem;">🔌 Claude Code 差し込み手順</h2>
+          <div class="guide-box">
+            <p>Claude Code に yakushield を差し込むには、環境変数 <code>ANTHROPIC_BASE_URL</code> を設定した状態で <code>claude</code> を起動します。</p>
+            <ol>
+              <li>プロキシサーバーを起動しておきます。</li>
+              <li>次のコマンドで Claude Code を起動します：
+                <pre style="background: rgba(0,0,0,0.5); padding: 0.5rem; border-radius: 0.25rem; margin-top: 0.5rem; overflow-x: auto; color: #a78bfa;"><code>export ANTHROPIC_BASE_URL=http://localhost:4040/v1&#10;claude</code></pre>
+              </li>
+              <li>すべてのリクエストが自動計測され、予算を超過した瞬間に暴走を防ぐために遮断されます！</li>
+            </ol>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- RIGHT SIDE: SIMULATOR & SETTINGS -->
+      <div class="side-column">
+        
+        <!-- CARD: MOCK TRIGGER SIMULATOR -->
+        <div class="glass-card" style="border-color: rgba(6, 182, 212, 0.2);">
+          <h2 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 0.5rem; color: var(--accent-cyan); display: flex; align-items: center; gap: 0.5rem;">
+            <span>🧪</span> デモ用リクエスト・シミュレータ
+          </h2>
+          <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1.25rem;">
+            本物のAPIキーがなくても、プロキシに擬似リクエストを送り、コスト計測と予算遮断の様子を今すぐテストできます。
+          </p>
+
+          <div class="form-group">
+            <label class="form-label" for="sim-model">テストモデル</label>
+            <select id="sim-model" class="input-field">
+              <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet ($3.00/M)</option>
+              <option value="claude-3-opus-20240229">Claude 3 Opus ($15.00/M - 高速消費)</option>
+              <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku ($0.80/M)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="sim-text">プロンプト (日本語が多いと浪費メーターが上昇)</label>
+            <textarea id="sim-text" class="input-field" rows="3" placeholder="ここに入力した日本語の文字数から、英語比でのトークン浪費率を算出します。">本日のタスクリストを読み込み、自動テストを実行して、その実行結果を整形してレポートを作成してください。</textarea>
+          </div>
+
+          <button id="btn-simulate" class="btn" style="background: linear-gradient(135deg, var(--accent-cyan), #0891b2);">
+            <span>🚀</span> 擬似リクエストを送信
+          </button>
+        </div>
+
+        <!-- CARD: LICENSE SETTINGS -->
+        <div class="glass-card">
+          <h2 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 1.25rem;">🔑 ライセンス設定 (LemonSqueezy)</h2>
+          
+          <div class="form-group">
+            <label class="form-label" for="license-input">LemonSqueezy ライセンスキー</label>
+            <input type="text" id="license-input" class="input-field" placeholder="YS-XXXX-XXXX-XXXX">
+          </div>
+          
+          <button id="btn-license" class="btn btn-secondary">
+            <span>💾</span> キーを適用
+          </button>
+          
+          <p id="license-feedback" style="font-size: 0.75rem; margin-top: 0.5rem; text-align: center; font-weight: 500;"></p>
+        </div>
+
+        <!-- CARD: QUICK STATS -->
+        <div class="glass-card">
+          <h2 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 1.25rem;">📊 システム統計</h2>
+          <div style="display: flex; flex-direction: column; gap: 0.75rem; font-size: 0.8rem;">
+            <div style="display: flex; justify-content: space-between;">
+              <span class="text-muted">総リクエスト回数:</span>
+              <span id="stat-total-requests" style="font-weight: 600;">0</span>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span class="text-muted">遮断された回数:</span>
+              <span id="stat-blocked-requests" style="font-weight: 600; color: var(--danger);">0</span>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span class="text-muted">合計消費トークン:</span>
+              <span id="stat-total-tokens" style="font-weight: 600;">0</span>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span class="text-muted">中継モード:</span>
+              <span id="stat-proxy-mode" style="font-weight: 600; color: var(--accent-cyan);">スタブ/モック</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+    <!-- CARD: RECENT REQUEST LOGS -->
+    <div class="glass-card">
+      <h2 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 1.25rem; display: flex; align-items: center; gap: 0.5rem;">
+        <span>📝</span> リクエスト中継ログ
+      </h2>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>タイムスタンプ</th>
+              <th>使用モデル</th>
+              <th class="text-right">入力 / 出力トークン</th>
+              <th class="text-right">総コスト (USD)</th>
+              <th class="text-right">うち日本語浪費 (USD)</th>
+              <th style="padding-left: 2rem;">ステータス</th>
+            </tr>
+          </thead>
+          <tbody id="logs-tbody">
+            <tr>
+              <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+                リクエストはまだありません。デモ用送信、または Claude Code を接続してください。
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- FOOTER -->
+    <footer>
+      <p>© 2026 yakushield (訳シールド) by Antigravity Inc.</p>
+      <p style="margin-top: 0.25rem; color: rgba(255,255,255,0.2);">Designed for loop protection, visual awareness, and absolute control.</p>
+    </footer>
+
+  </div>
+
+  <!-- TOAST NOTIFICATION -->
+  <div id="toast" class="toast">
+    <span id="toast-icon">ℹ️</span>
+    <span id="toast-text">メッセージ</span>
+  </div>
+
+  <!-- CLIENT-SIDE SCRIPT -->
+  <script>
+    // Elements
+    const todayCostEl = document.getElementById('today-cost');
+    const budgetValTxt = document.getElementById('budget-val-txt');
+    const sliderVal = document.getElementById('slider-val');
+    const budgetRange = document.getElementById('budget-range');
+    const wastedTokensEl = document.getElementById('wasted-tokens');
+    const wastedCostEl = document.getElementById('wasted-cost');
+    const licenseBadge = document.getElementById('license-badge');
+    const licenseBadgeText = document.getElementById('license-badge-text');
+    const breakerAlertBanner = document.getElementById('breaker-alert-banner');
+    
+    const simModel = document.getElementById('sim-model');
+    const simText = document.getElementById('sim-text');
+    const btnSimulate = document.getElementById('btn-simulate');
+    
+    const licenseInput = document.getElementById('license-input');
+    const btnLicense = document.getElementById('btn-license');
+    const licenseFeedback = document.getElementById('license-feedback');
+    
+    const statTotalRequests = document.getElementById('stat-total-requests');
+    const statBlockedRequests = document.getElementById('stat-blocked-requests');
+    const statTotalTokens = document.getElementById('stat-total-tokens');
+    const statProxyMode = document.getElementById('stat-proxy-mode');
+    
+    const logsTbody = document.getElementById('logs-tbody');
+    const toast = document.getElementById('toast');
+    const toastIcon = document.getElementById('toast-icon');
+    const toastText = document.getElementById('toast-text');
+
+    // Toast show helper
+    function showToast(message, type = 'info') {
+      toastText.innerText = message;
+      toast.className = 'toast show';
+      
+      if (type === 'success') {
+        toast.classList.add('toast-success');
+        toastIcon.innerText = '✅';
+      } else if (type === 'error') {
+        toast.classList.add('toast-error');
+        toastIcon.innerText = '🚨';
+      } else if (type === 'warning') {
+        toast.classList.add('toast-warning');
+        toastIcon.innerText = '⚠️';
+      } else {
+        toastIcon.innerText = 'ℹ️';
+      }
+
+      setTimeout(() => {
+        toast.className = 'toast';
+      }, 3500);
+    }
+
+    // APIから統計データを取得してUIを更新
+    async function fetchStats() {
+      try {
+        const res = await fetch('/api/stats');
+        if (!res.ok) throw new Error('Failed to fetch stats');
+        const data = await res.json();
+        updateUI(data);
+      } catch (err) {
+        console.error('Stats fetch error:', err);
+      }
+    }
+
+    // UIの描画更新
+    function updateUI(stats) {
+      // コスト
+      todayCostEl.innerText = `$${stats.todayCostUsd.toFixed(4)}`;
+      budgetValTxt.innerText = `$${stats.dailyBudgetLimitUsd.toFixed(2)}`;
+      
+      // スライダー
+      if (document.activeElement !== budgetRange) {
+        budgetRange.value = stats.dailyBudgetLimitUsd;
+        sliderVal.innerText = `$${stats.dailyBudgetLimitUsd.toFixed(2)}`;
+      }
+
+      // 日本語浪費
+      wastedTokensEl.innerText = stats.japaneseWastedTokens.toLocaleString();
+      wastedCostEl.innerText = `$${stats.japaneseWastedCostUsd.toFixed(4)}`;
+
+      // 予算ブレーカー警告表示
+      if (stats.todayCostUsd >= stats.dailyBudgetLimitUsd) {
+        breakerAlertBanner.style.display = 'flex';
+      } else {
+        breakerAlertBanner.style.display = 'none';
+      }
+
+      // システム統計
+      statTotalRequests.innerText = stats.totalRequests;
+      statBlockedRequests.innerText = stats.blockedRequests;
+      statTotalTokens.innerText = (stats.todayInputTokens + stats.todayOutputTokens).toLocaleString();
+      statProxyMode.innerText = stats.hasRealKey ? '本物 API 中継中' : 'スタブ/モックモード';
+      statProxyMode.style.color = stats.hasRealKey ? 'var(--success)' : 'var(--accent-cyan)';
+
+      // ライセンス
+      if (stats.licenseStatus === 'pro') {
+        licenseBadge.className = 'badge-status badge-pro';
+        licenseBadgeText.innerText = 'PRO PLAN (アクティブ)';
+        licenseInput.value = stats.licenseKey;
+        licenseFeedback.innerText = 'ライセンス認証済 (YS形式確認スタブ)';
+        licenseFeedback.style.color = 'var(--success)';
+      } else if (stats.licenseStatus === 'invalid') {
+        licenseBadge.className = 'badge-status badge-free';
+        licenseBadgeText.innerText = 'FREE PLAN (計測+遮断)';
+        licenseFeedback.innerText = '無効な形式です。YS-XXXX-XXXX-XXXX の形式で入力してください。';
+        licenseFeedback.style.color = 'var(--danger)';
+      } else {
+        licenseBadge.className = 'badge-status badge-free';
+        licenseBadgeText.innerText = 'FREE PLAN (計測+遮断)';
+        licenseFeedback.innerText = '';
+      }
+
+      // ログテーブル
+      if (!stats.requestsLog || stats.requestsLog.length === 0) {
+        logsTbody.innerHTML = `
+          <tr>
+            <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+              リクエストはまだありません。デモ用送信、または Claude Code を接続してください。
+            </td>
+          </tr>
+        `;
+      } else {
+        logsTbody.innerHTML = stats.requestsLog.map(log => {
+          const statusClass = log.status === 'success' ? 'status-success' : 'status-blocked';
+          const statusLabel = log.status === 'success' ? '成功' : '遮断 (超過)';
+          return `
+            <tr>
+              <td>${log.timestamp}</td>
+              <td style="font-weight:600; color:#fff;">${log.model} ${log.isMock ? '<span style="font-size:0.65rem; color:var(--accent-cyan); border:1px solid rgba(6,182,212,0.3); padding:0.1rem 0.25rem; border-radius:0.2rem; margin-left:0.25rem;">MOCK</span>' : ''}</td>
+              <td class="text-right" style="font-family:monospace;">${log.inputTokens.toLocaleString()} / ${log.outputTokens.toLocaleString()}</td>
+              <td class="text-right" style="font-family:monospace; font-weight:600;">$${log.costUsd.toFixed(5)}</td>
+              <td class="text-right" style="font-family:monospace; color:var(--accent-pink); font-weight:500;">$${log.wastedCostUsd.toFixed(5)}</td>
+              <td style="padding-left: 2rem;">
+                <span class="status-pill ${statusClass}">${statusLabel}</span>
+              </td>
+            </tr>
+          `;
+        }).join('');
+      }
+    }
+
+    // スライダー操作
+    budgetRange.addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value);
+      sliderVal.innerText = `$${val.toFixed(2)}`;
+    });
+
+    budgetRange.addEventListener('change', async (e) => {
+      const val = parseFloat(e.target.value);
+      try {
+        const res = await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dailyBudgetLimitUsd: val })
+        });
+        if (res.ok) {
+          showToast(`予算上限を $${val.toFixed(2)} に変更しました。`, 'success');
+          fetchStats();
+        }
+      } catch (err) {
+        showToast('設定の更新に失敗しました。', 'error');
+      }
+    });
+
+    // モックリクエスト送信
+    btnSimulate.addEventListener('click', async () => {
+      const text = simText.value.trim();
+      const model = simModel.value;
+      
+      if (!text) {
+        showToast('プロンプトを入力してください。', 'warning');
+        return;
+      }
+
+      btnSimulate.disabled = true;
+      btnSimulate.innerText = '送信中...';
+
+      try {
+        const res = await fetch('/api/mock-trigger', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, model })
+        });
+        
+        const data = await res.json();
+        
+        if (res.status === 429) {
+          showToast('【遮断】予算上限に達したため、ブレーカーがリクエストを遮断しました！', 'error');
+        } else if (res.ok) {
+          showToast(`擬似リクエスト成功！+$${data.addedCostUsd.toFixed(5)} が加算されました。`, 'success');
+        } else {
+          showToast('エラーが発生しました。', 'error');
+        }
+        
+        // 統計再取得
+        updateUI(data.stats || await (await fetch('/api/stats')).json());
+      } catch (err) {
+        showToast('リクエストの送信に失敗しました。', 'error');
+      } finally {
+        btnSimulate.disabled = false;
+        btnSimulate.innerText = '🚀 擬似リクエストを送信';
+      }
+    });
+
+    // ライセンス適用
+    btnLicense.addEventListener('click', async () => {
+      const key = licenseInput.value.trim();
+      
+      try {
+        const res = await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ licenseKey: key })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          updateUI(data.stats);
+          if (data.stats.licenseStatus === 'pro') {
+            showToast('Proライセンスキーを適用しました！(スタブ)', 'success');
+          } else if (key === '') {
+            showToast('ライセンスキーを解除しました。', 'info');
+          } else {
+            showToast('無効なライセンスキー形式です。', 'error');
+          }
+        }
+      } catch (err) {
+        showToast('キーの適用に失敗しました。', 'error');
+      }
+    });
+
+    // 初期化ロード
+    fetchStats();
+    
+    // 5秒おきに自動更新（Claude Code等のバックグラウンド通信をリアルタイム反映）
+    setInterval(fetchStats, 4000);
+  </script>
+</body>
+</html>

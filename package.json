@@ -1,0 +1,23 @@
+{
+  "name": "yakushield",
+  "version": "1.0.0",
+  "description": "yakushield (訳シールド) - LLM Proxy with Cost Tracking & Budget Breaker",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "yakushield": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc && cp src/dashboard.html dist/",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3",
+    "tsx": "^4.7.1"
+  }
+}
